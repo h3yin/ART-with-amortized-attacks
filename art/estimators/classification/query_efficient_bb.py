@@ -133,7 +133,29 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
         """
         raise NotImplementedError
 
+    def _generate_sample_i(self, x: np.ndarray, epsilon_map: np.ndarray, i: int) -> Tuple[np.ndarray, np.ndarray]:
+        minus = clip_and_round(
+            x - epsilon_map[i],
+            self.clip_values,
+            self.round_samples,
+        )
+        plus = clip_and_round(
+            x + epsilon_map[i],
+            self.clip_values,
+            self.round_samples,
+        )
+        return minus, plus
+
     def loss_gradient(self, x: np.ndarray, y: np.ndarray, **kwargs) -> np.ndarray:
+        if self.amortized_attack:
+            return self.loss_gradient_new_efficient(x, y)
+        else:
+            return self.loss_gradient_old(x, y)
+
+        #return self.loss_gradient_new(x, y)
+        #return self.loss_gradient_new_efficient(x, y)
+
+    def loss_gradient_new_efficient(self, x: np.ndarray, y: np.ndarray, **kwargs) -> np.ndarray:
         """
         Compute the gradient of the loss function w.r.t. `x`.
 
@@ -142,9 +164,146 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
         :return: Array of gradients of the same shape as `x`.
         """
         epsilon_map = self.sigma * np.random.normal(size=([self.num_basis] + list(self.input_shape)))
+        print(epsilon_map.shape)
+        print(epsilon_map.reshape(self.num_basis, -1).shape)
+        grads = [0.0] * len(x)
+
+        for j in range(epsilon_map.shape[0]):
+            minus_preds = []
+            #plus_preds = []
+
+            pluses = []
+            minuses = []
+
+            minus = None
+            plus = None
+
+            #for r in range(2):
+            for i in range(len(x)):
+                minus, plus = self._generate_sample_i(x[i : i + 1], epsilon_map, j)
+                #minuses.append(np.squeeze(minus, 0))
+                #pluses.append(np.squeeze(plus, 0))
+                minuses.append(minus)
+                pluses.append(plus)
+
+            minuses = np.array(minuses)
+            pluses = np.array(pluses)
+
+            minuses = np.squeeze(minuses, 1)
+            pluses = np.squeeze(pluses, 1)
+
+            minus_preds = self.predict(minuses, batch_size=128)
+            plus_preds = self.predict(pluses, batch_size=128)
+
+            for i, (mp, pp) in enumerate(zip(minus_preds, plus_preds)):
+                new_y_minus = entropy(y[i], mp)
+                new_y_plus = entropy(y[i], pp)
+
+                one_grad = epsilon_map[j] * (new_y_plus - new_y_minus)
+                grads[i] += one_grad
+
+            #for r in range(2):
+            #    for i in range(len(x)):
+            #        if r == 0: #plus
+            #            minus, plus = self._generate_sample_i(x[i : i + 1], epsilon_map, j)
+            #            minus_preds.append(self.predict(minus)[0])
+            #            pluses.append(plus)
+            #        else: #minus
+            #            plus_pred = self.predict(pluses[i])[0]
+                        
+            #            new_y_minus = entropy(y[i], minus_preds[i])
+            #            new_y_plus = entropy(y[i], plus_pred)
+
+            #            one_grad = epsilon_map[j] * (new_y_plus - new_y_minus)
+            #            grads[i] += one_grad
+
+        for i in range(len(grads)):
+            grads[i] = grads[i]* 2/self.num_basis / (2 * self.sigma)
+
+        grads = self._apply_preprocessing_gradient(x, np.array(grads))
+        return grads
+
+
+    def loss_gradient_new(self, x: np.ndarray, y: np.ndarray, **kwargs) -> np.ndarray:
+        """
+        Compute the gradient of the loss function w.r.t. `x`.
+
+        :param x: Sample input with shape as expected by the model.
+        :param y: Correct labels, one-vs-rest encoding.
+        :return: Array of gradients of the same shape as `x`.
+        """
+        epsilon_map = self.sigma * np.random.normal(size=([self.num_basis] + list(self.input_shape)))
+        print(epsilon_map.shape)
+        print(epsilon_map.reshape(self.num_basis, -1).shape)
+        grads = [0.0] * len(x)
+
+        for j in range(epsilon_map.shape[0]):
+            minus_preds = []
+            #plus_preds = []
+            pluses = []
+            minus = None
+            plus = None
+            for r in range(2):
+                for i in range(len(x)):
+                    if r == 0:
+                        minus, plus = self._generate_sample_i(x[i : i + 1], epsilon_map, j)
+                        minus_preds.append(self.predict(minus)[0])
+                        pluses.append(plus)
+                    else:
+                        plus_pred = self.predict(pluses[i])[0]
+                        
+                        new_y_minus = entropy(y[i], minus_preds[i])
+                        new_y_plus = entropy(y[i], plus_pred)
+
+                        one_grad = epsilon_map[j] * (new_y_plus - new_y_minus)
+                        grads[i] += one_grad
+
+        #for j in range(epsilon_map.shape[0]):
+        #    for i in range(len(x)):
+        #        minus, plus = self._generate_sample_i(x[i : i + 1], epsilon_map, j)
+        #        pred = self.predict(np.concatenate((minus, plus)))
+
+        #        new_y_minus = entropy(y[i], pred[0])
+        #        new_y_plus = entropy(y[i], pred[1])
+
+        #        one_grad = epsilon_map[j] * (new_y_plus - new_y_minus)
+        #        grads[i] += one_grad
+
+        #    #pluses = [self._generate_sample_i(x[i : i + 1], epsilon_map, j)[1][0] for i in range(len(x))]
+        #    #plus_preds = self.predict(pluses)
+        #    #print('plus_preds.shape', plus_preds.shape)
+        #    #print(len(pluses))
+
+        #    #minuses = [self._generate_sample_i(x[i : i + 1], epsilon_map, j)[0][0] for i in range(len(x))]
+        #    #minus_preds = self.predict(minuses)
+        #    #print('minus_preds.shape', minus_preds.shape)
+
+        #    #for i in range(len(x)):
+        #    #    grads[i] += epsilon_map[j] * (plus_preds[i] - minus_preds[i])
+
+        for i in range(len(grads)):
+            grads[i] = grads[i]* 2/self.num_basis / (2 * self.sigma)
+
+        grads = self._apply_preprocessing_gradient(x, np.array(grads))
+        return grads
+
+    def loss_gradient_old(self, x: np.ndarray, y: np.ndarray, **kwargs) -> np.ndarray:
+        #new_grads = self.loss_gradient_new(x, y)
+        """
+        Compute the gradient of the loss function w.r.t. `x`.
+
+        :param x: Sample input with shape as expected by the model.
+        :param y: Correct labels, one-vs-rest encoding.
+        :return: Array of gradients of the same shape as `x`.
+        """
+        epsilon_map = self.sigma * np.random.normal(size=([self.num_basis] + list(self.input_shape)))
+        #print(epsilon_map.shape)
+        #print(epsilon_map.reshape(self.num_basis, -1).shape)
         grads = []
         for i in range(len(x)):
+            #print('i', i)
             minus, plus = self._generate_samples(x[i : i + 1], epsilon_map)
+            #print('shape', minus.shape, plus.shape)
 
             # Vectorized; small tests weren't faster
             # ent_vec = np.vectorize(lambda p: entropy(y[i], p), signature='(n)->()')
@@ -153,6 +312,10 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
             # Vanilla
             new_y_minus = np.array([entropy(y[i], p) for p in self.predict(minus)])
             new_y_plus = np.array([entropy(y[i], p) for p in self.predict(plus)])
+
+            #print('term1 shape', epsilon_map.reshape(self.num_basis, -1).shape)
+            #print('term2 shape', ((new_y_plus - new_y_minus).reshape(self.num_basis, -1) / (2 * self.sigma)).shape)
+
             query_efficient_grad = 2 * np.mean(
                 np.multiply(
                     epsilon_map.reshape(self.num_basis, -1),
@@ -162,6 +325,9 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
             )
             grads.append(query_efficient_grad)
         grads = self._apply_preprocessing_gradient(x, np.array(grads))
+        #print('old grads', grads)
+        #print('new grads', new_grads)
+        #print('equal', grads == new_grads)
         return grads
 
     def get_activations(self, x: np.ndarray, layer: Union[int, str], batch_size: int) -> np.ndarray:

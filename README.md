@@ -1,3 +1,23 @@
+This is forked from the Adversarial Robustness Toolbox (see below) with modified QueryEfficientGradientEstimationClassifier to be amortized.
+
+`tests/amortized/amortized_attack.py` contains a CNN with stateful defense implemented and runs the amortized query efficient black-box attack (or NES) on it.
+
+To run go to the main directory and run `python tests/amortized/amortized_attack.py [NUM TEST DATA] [REPS] [NUM_CHOSEN] [SIGMA] [BUF_SIZE] [PERFORM_ATTACK] [NORM] [ATTACK_TYPE]`
+
+Parameters:
+1. `NUM_TEST_DATA`: number of data points from the test set used to set the threshold and to choose from
+2. `REPS`: how many pairs of samples to generate and query (in NES) for each adversarial example
+3. `NUM_CHOSEN': out of the `NUM_TEST_DATA` data points, choose this many to generate adversarial examples
+4. `SIGMA`: 1/sigma parameters in NES, usually set to 32 (for sigma of 1/32)
+5. `BUF_SIZE`: how large the query buffer is
+6. `PERFORM_ATTACK`: either `0` to only run benign samples (used to determine threshold) or `1` to run the attack
+7. `NORM`: norm used for distance metric, so far only l2-norm has been implemented
+8. `ATTACK_TYPE`: either `amortized` or `vanilla`, to determine which version of the attack to use
+
+Scripts `run_amortized.sh`, `run_vanilla.sh`, and `run_thresh.sh` are provided as examples.
+
+____________________________________
+
 # Adversarial Robustness Toolbox (ART) v1.9
 <p align="center">
   <img src="docs/images/art_lfai.png?raw=true" width="467" title="ART logo">
