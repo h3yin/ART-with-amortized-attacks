@@ -7,7 +7,7 @@ To run go to the main directory and run `python tests/amortized/amortized_attack
 Parameters:
 1. `NUM_TEST_DATA`: number of data points from the test set used to set the threshold and to choose from
 2. `REPS`: how many pairs of samples to generate and query (in NES) for each adversarial example
-3. `NUM_CHOSEN': out of the `NUM_TEST_DATA` data points, choose this many to generate adversarial examples
+3. `NUM_CHOSEN`: out of the `NUM_TEST_DATA` data points, choose this many to generate adversarial examples
 4. `SIGMA`: 1/sigma parameters in NES, usually set to 32 (for sigma of 1/32)
 5. `BUF_SIZE`: how large the query buffer is
 6. `PERFORM_ATTACK`: either `0` to only run benign samples (used to determine threshold) or `1` to run the attack
