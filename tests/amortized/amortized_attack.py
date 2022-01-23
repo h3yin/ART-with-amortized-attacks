@@ -116,17 +116,48 @@ class TensorFlowModel(Model):
         if self.sd:
             self.examples_processed += x.shape[0]
             #print('self.examples_processed', self.examples_processed)
-            if self.buf is not None and self.buf.shape[0] >= self.k:
-                buf = self.buf[-1*self.buf_limit:]
-                for i in range(x.shape[0]):
-                    comp_buf = np.concatenate((np.squeeze(buf[i:], axis=-1), np.squeeze(x[:i], axis=-1)))
-                    #comp_buf = np.squeeze(np.concatenate((buf[i:],x[:i])), axis=-1)
-                    distances = self.dist_metric(comp_buf, np.squeeze(x[i], axis=-1))
-                    distances.sort()
-                    #ad = np.average(distances[distances != 0][:self.k])
-                    nzi = np.nonzero(distances)[0][0]
-                    ad = np.average(distances[nzi: nzi+self.k])
 
+            if self.buf is not None and self.buf.shape[0] >= self.k:
+                #buf1 = self.buf[-1*self.buf_limit:]
+                buf = np.concatenate((np.squeeze(self.buf[-1*self.buf_limit:], axis=-1), np.squeeze(x, axis=-1)))
+
+                x_len = x.shape[0]
+                buf_len = self.buf.shape[0]
+
+                if buf_len > self.buf_limit:
+                    buf_len = self.buf_limit
+
+                for i in range(x.shape[0]):
+                    #comp_buf1 = np.concatenate((np.squeeze(buf1[i:], axis=-1), np.squeeze(x[:i], axis=-1)))
+
+                    endi = -(x_len-i)
+                    comp_buf = buf[ endi-self.buf_limit : endi]
+
+                    #print(self.buf.shape[0], np.all(comp_buf == comp_buf1))
+
+                    distances = self.dist_metric(comp_buf, np.squeeze(x[i], axis=-1))
+
+                    #distances.sort()
+                    ##ad = np.average(distances[distances != 0][:self.k])
+                    #nzi = np.nonzero(distances)[0][0]
+                    #ad = np.average(distances[nzi: nzi+self.k])
+
+                    #ad = np.average(np.partition(distances[distances != 0], self.k)[:self.k])
+                    #ad = np.average(nlowest(distances[distances != 0], self.k)[:self.k])
+ 
+                    #nonzero = distances[distances != 0]
+                    #nonzero.partition(self.k)
+                    #ad = np.average(nonzero[:self.k])
+
+                    num_zeros = distances.shape[0] - np.count_nonzero(distances)
+                    if num_zeros:
+                        distances.partition(self.k + num_zeros)
+                        temp = distances[:self.k + num_zeros]
+                        ad = np.average(temp[temp!=0])
+                    else:
+                        distances.partition(self.k)
+                        ad = np.average(distances[:self.k])
+ 
                     if ad <= self.thresh:
                         self.attacks += 1
 
@@ -233,6 +264,57 @@ def l1_norm_dist(a,b):
 def l2_norm_dist(a, b):
     t = a-b
     return np.sqrt(np.einsum('kij,kij->k', t, t))
+
+#https://stackoverflow.com/questions/44338676/what-is-the-fastest-way-to-select-the-smallest-n-elements-from-an-array
+def _partition(A, low, high):
+    """copied from numba source code"""
+    mid = (low + high) >> 1
+    if A[mid] < A[low]:
+        A[low], A[mid] = A[mid], A[low]
+    if A[high] < A[mid]:
+        A[high], A[mid] = A[mid], A[high]
+        if A[mid] < A[low]:
+            A[low], A[mid] = A[mid], A[low]
+    pivot = A[mid]
+
+    A[high], A[mid] = A[mid], A[high]
+
+    i = low
+    for j in range(low, high):
+        if A[j] <= pivot:
+            A[i], A[j] = A[j], A[i]
+            i += 1
+
+    A[i], A[high] = A[high], A[i]
+    return i
+
+#https://stackoverflow.com/questions/44338676/what-is-the-fastest-way-to-select-the-smallest-n-elements-from-an-array
+def _select_lowest(arry, k, low, high):
+    """copied from numba source code, slightly changed"""
+    i = _partition(arry, low, high)
+    while i != k:
+        if i < k:
+            low = i + 1
+            i = _partition(arry, low, high)
+        else:
+            high = i - 1
+            i = _partition(arry, low, high)
+    return arry[:k]
+
+#https://stackoverflow.com/questions/44338676/what-is-the-fastest-way-to-select-the-smallest-n-elements-from-an-array
+def _nlowest_inner(temp_arry, n, idx):
+    """copied from numba source code, slightly changed"""
+    low = 0
+    high = n - 1
+    return _select_lowest(temp_arry, idx, low, high)
+
+#https://stackoverflow.com/questions/44338676/what-is-the-fastest-way-to-select-the-smallest-n-elements-from-an-array
+def nlowest(a, idx):
+    """copied from numba source code, slightly changed"""
+    temp_arry = a.flatten()  # does a copy! :)
+    n = temp_arry.shape[0]
+    return _nlowest_inner(temp_arry, n, idx)
+
 
 def choose_best_samples(x_data,y_data, num, k=50, norm=2, retrieve=True, store=True):
     if len(x_data) == num:
@@ -538,6 +620,8 @@ predictions = classifier.predict(x_test_adv)
 accuracy = np.sum(np.argmax(predictions, axis=1) == np.argmax(y_test, axis=1)) / len(y_test)
 #print('eps: ', attack.eps, ' eps_step', attack.eps_step)
 #print('triangulate: ', attack.triangulate, ' t_n: ', attack.t_n)
+
+print('time taken:', end - start)
 print("Accuracy on adversarial test examples: {}".format(accuracy))
 print('model thresh', model.thresh)
 print('after attack, attack detected: ', model.attacked())
@@ -570,7 +654,6 @@ o = np.squeeze(x_test, axis=-1)
 norm = np.abs(o).max(axis=(1,2))
 print('average l-infinity norm of difference over l-infinity norm of original', np.average(dist/norm))
 
-print('time taken:', end - start)
 #print('average of the norm of the (norm of differences over original)', np.average(np.linalg.norm(np.linalg.norm(np.squeeze(x_test - x_test_adv, axis=-1), axis=(-1,-2), ord=np.inf)[:, None, None]/np.squeeze(x_test, axis=-1), axis=(-1,-2) )))
 
 #print(x_test[12].tolist())

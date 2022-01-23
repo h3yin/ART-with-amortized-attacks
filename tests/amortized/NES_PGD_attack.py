@@ -94,41 +94,45 @@ class TensorFlowModel(Model):
         :param x: Input to the model
         :return: Prediction of the model
         """
+        #if x is not None and x.shape[0] is not None:
+        #    self.examples_processed += x.shape[0]
 
         #print('x.shape', x.shape, ' attacks:', self.attacks)
         if self.sd:
             self.examples_processed += x.shape[0]
             #print('self.examples_processed', self.examples_processed)
             if self.buf is not None and self.buf.shape[0] >= self.k:
-                buf = self.buf[-1*self.buf_limit:]
+                #buf1 = self.buf[-1*self.buf_limit:]
+                buf = np.concatenate((np.squeeze(self.buf[-1*self.buf_limit:], axis=-1), np.squeeze(x, axis=-1)))
+                x_len = x.shape[0]
+                buf_len = self.buf.shape[0]
+                if buf_len > self.buf_limit:
+                    buf_len = self.buf_limit
+
                 for i in range(x.shape[0]):
-                    #buf = buf[-1*self.buf_limit:]
-                    #distances = np.sort(np.linalg.norm(np.squeeze(buf, axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf))
+                    #d1 = self.dist_metric(np.squeeze(buf[i:], axis=-1), np.squeeze(x[i], axis=-1))
+                    #d2 = self.dist_metric(np.squeeze(x[:i], axis=-1), np.squeeze(x[i], axis=-1))
+                    #distances = np.sort(np.concatenate((d1, d2)))
 
-                    #half = int(self.buf_limit/2)
-                    #d1 = np.linalg.norm(np.squeeze(buf[i:half], axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf)
-                    #d2 = np.linalg.norm(np.squeeze(buf[i+half:], axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf)
-                    #d3 = np.linalg.norm(np.squeeze(x[:i], axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf)
-                    #distances = np.sort(np.concatenate((d1, d2, d3)))
+                    #comp_buf = np.concatenate((np.squeeze(buf[i:], axis=-1), np.squeeze(x[:i], axis=-1)))
+                    endi = -(x_len-i)
+                    comp_buf = buf[ endi-self.buf_limit : endi]
 
-                    #d1 = np.linalg.norm(np.squeeze(buf[i:], axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf)
-                    #d2 = np.linalg.norm(np.squeeze(x[:i], axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf)
+                    distances = self.dist_metric(comp_buf, np.squeeze(x[i], axis=-1))
 
-                    #t = np.squeeze(buf[i:], axis=-1) - np.squeeze(x[i], axis=-1)
-                    #d1 = np.sqrt(np.einsum('kij,kij->k', t, t))
-                    #t = np.squeeze(x[:i], axis=-1) - np.squeeze(x[i], axis=-1)
-                    #d2 = np.sqrt(np.einsum('kij,kij->k', t, t))
+                    #distances.sort()
+                    #nzi = np.nonzero(distances)[0][0]
+                    #ad = np.average(distances[nzi: nzi+self.k])
+                    ##ad = np.average(distances[:self.k])
 
-                    d1 = self.dist_metric(np.squeeze(buf[i:], axis=-1), np.squeeze(x[i], axis=-1))
-                    d2 = self.dist_metric(np.squeeze(x[:i], axis=-1), np.squeeze(x[i], axis=-1))
-                    #d1 = self.dist_metric(buf[i:], x[i])
-                    #d2 = self.dist_metric(x[:i], x[i])
-
-                    distances = np.sort(np.concatenate((d1, d2)))
-
-                    nzi = np.nonzero(distances)[0][0]
-                    ad = np.average(distances[nzi: nzi+self.k])
-                    #ad = np.average(distances[:self.k])
+                    num_zeros = distances.shape[0] - np.count_nonzero(distances)
+                    if num_zeros:
+                        distances.partition(self.k + num_zeros)
+                        temp = distances[:self.k + num_zeros]
+                        ad = np.average(temp[temp!=0])
+                    else:
+                        distances.partition(self.k)
+                        ad = np.average(distances[:self.k])
 
                     if ad <= self.thresh:
                         self.attacks += 1
@@ -495,8 +499,8 @@ attack = ZooAttack(
 qe_classifier = QueryEfficientGradientEstimationClassifier(classifier, reps, 1 / sigma, round_samples=1 / 255.0)
 qe_classifier.amortized_attack = amortized_attack
 
-#attack = FastGradientMethod(classifier, eps=0.05, eps_step=0.025, batch_size=buf_limit, minimal=True)
-attack = ProjectedGradientDescent(qe_classifier, eps=0.05, eps_step=0.025, max_iter=10, batch_size=buf_limit, verbose=False)
+#attack = FastGradientMethod(qe_classifier, eps=0.05, eps_step=0.025, batch_size=buf_limit, minimal=True)
+attack = ProjectedGradientDescent(qe_classifier, eps=0.05, eps_step=0.025, max_iter=5, batch_size=buf_limit, verbose=False)
 print('eps: ', attack.eps, ' eps_step: ', attack.eps_step, ' max_iter', attack.max_iter)
 start = time.time()
 model.sd = True
@@ -506,19 +510,29 @@ end = time.time()
 
 print('attack generated', not (x_test==x_test_adv).all())
 
-
 # Step 7: Evaluate the ART classifier on adversarial test examples
 
 predictions = classifier.predict(x_test_adv)
 accuracy = np.sum(np.argmax(predictions, axis=1) == np.argmax(y_test, axis=1)) / len(y_test)
 #print('eps: ', attack.eps, ' eps_step', attack.eps_step)
 #print('triangulate: ', attack.triangulate, ' t_n: ', attack.t_n)
+
+for i, v in enumerate(np.argmax(predictions, axis=1) == np.argmax(y_test, axis=1)):
+    if not v:
+        print(x_test_adv[i].tolist())
+        break
+
+print('length:', length, ' reps:', reps_arg, ' chose:', chose, ' sigma:', sigma, ' buf limit:', buf_limit, ' perform_attack: ', perform_attack, ' norm:', norm, ' amortized attack:', amortized_attack)
+print('eps: ', attack.eps, ' eps_step: ', attack.eps_step, ' max_iter', attack.max_iter)
+
+
+print('time taken:', end - start)
 print("Accuracy on adversarial test examples: {}%".format(accuracy * 100))
 print('model thresh', model.thresh)
 print('after attack, attack detected: ', model.attacked())
 print('after attack, min distance: ', model.min_distance)
 print('after attack, num attacks: ', model.attacks)
-if model.buf != None:
+if model.buf is not None:
     print(model.buf.shape)
 
 print('examples_processed', model.examples_processed)
@@ -550,7 +564,6 @@ o = np.squeeze(x_test, axis=-1)
 norm = np.abs(o).max(axis=(1,2))
 print('average l-infinity norm of difference over l-infinity norm of original', np.average(dist/norm))
 
-print('time taken:', end - start)
 #print('average of the norm of the (norm of differences over original)', np.average(np.linalg.norm(np.linalg.norm(np.squeeze(x_test - x_test_adv, axis=-1), axis=(-1,-2), ord=np.inf)[:, None, None]/np.squeeze(x_test, axis=-1), axis=(-1,-2) )))
 
 #print(x_test[12].tolist())

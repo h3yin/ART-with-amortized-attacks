@@ -192,8 +192,8 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
             minuses = np.squeeze(minuses, 1)
             pluses = np.squeeze(pluses, 1)
 
-            minus_preds = self.predict(minuses)
-            plus_preds = self.predict(pluses)
+            minus_preds = self.predict(minuses, batch_size=300)
+            plus_preds = self.predict(pluses, batch_size=300)
 
             for i, (mp, pp) in enumerate(zip(minus_preds, plus_preds)):
                 new_y_minus = entropy(y[i], mp)
