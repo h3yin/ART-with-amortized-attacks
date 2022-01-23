@@ -155,8 +155,11 @@ class TensorFlowModel(Model):
                         temp = distances[:self.k + num_zeros]
                         ad = np.average(temp[temp!=0])
                     else:
-                        distances.partition(self.k)
-                        ad = np.average(distances[:self.k])
+                        if len(distances) == self.k:
+                            ad = np.average(distances)
+                        else:
+                            distances.partition(self.k)
+                            ad = np.average(distances[:self.k])
  
                     if ad <= self.thresh:
                         self.attacks += 1

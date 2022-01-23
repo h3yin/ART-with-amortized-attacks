@@ -342,6 +342,7 @@ class ProjectedGradientDescentNumpy(ProjectedGradientDescentCommon):
                         self.max_iter, desc="PGD - Iterations", leave=False, disable=not self.verbose
                     ):
                         self._i_max_iter = i_max_iter
+                        print('current iter', i_max_iter)
 
                         batch = self._compute(
                             batch,
@@ -398,6 +399,7 @@ class ProjectedGradientDescentNumpy(ProjectedGradientDescentCommon):
 
             for i_max_iter in trange(self.max_iter, desc="PGD - Iterations", disable=not self.verbose):
                 self._i_max_iter = i_max_iter
+                print('current iter', i_max_iter)
 
                 adv_x = self._compute(
                     adv_x,

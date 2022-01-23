@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+import itertools
 
 class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, ClassifierMixin, BaseEstimator):
     """
@@ -149,6 +150,7 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
     def loss_gradient(self, x: np.ndarray, y: np.ndarray, **kwargs) -> np.ndarray:
         if self.amortized_attack:
             return self.loss_gradient_new_efficient(x, y)
+            #return self.loss_gradient_new(x, y)
         else:
             return self.loss_gradient_old(x, y)
 
@@ -168,54 +170,64 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
         #print(epsilon_map.reshape(self.num_basis, -1).shape)
         grads = [0.0] * len(x)
 
-        for j in range(epsilon_map.shape[0]):
+        #print('eps map shape', epsilon_map.shape)
+        #print('epsmap 11', epsilon_map[11])
+
+        #batch over multiple examples
+        reps_per_batch = 10
+        reps = epsilon_map.shape[0]
+        for jb in range(0, reps, reps_per_batch):
             minus_preds = []
-            #plus_preds = []
+            len_x = len(x)
+            pm_len = 2*len_x*reps_per_batch
+            minuses_pluses = [None]*pm_len
 
-            pluses = []
-            minuses = []
+            for b in range(reps_per_batch):
+              j = jb + b
+              #print('j', j, 'b', b)
+              if j >= reps:
+                  b -= 1
+                  #print('b after dec', b)
+                  break
 
-            minus = None
-            plus = None
-
-            #for r in range(2):
-            for i in range(len(x)):
+              for i in range(len(x)):
                 minus, plus = self._generate_sample_i(x[i : i + 1], epsilon_map, j)
-                #minuses.append(np.squeeze(minus, 0))
-                #pluses.append(np.squeeze(plus, 0))
-                minuses.append(minus)
-                pluses.append(plus)
+                #print('j', j)
+                #print('minus i', i + b*2*len_x, 'plus i', i + len_x + b*2*len_x)
+                minuses_pluses[i + b*2*len_x] = minus
+                minuses_pluses[i + len_x + b*2*len_x] = plus
+                
+            #print('b after loop', b)
+            if jb + reps_per_batch > reps:
+                #print(minuses_pluses[:(b+1)*2*len_x])
+                #print(minuses_pluses[(b+1)*2*len_x:])
+                minuses_pluses = minuses_pluses[:(b+1)*2*len_x]
+            
 
-            minuses = np.array(minuses)
-            pluses = np.array(pluses)
+            #print('len(minuses_pluses)', len(minuses_pluses))
 
-            minuses = np.squeeze(minuses, 1)
-            pluses = np.squeeze(pluses, 1)
+            minuses_pluses = np.array(minuses_pluses)
+            minuses_pluses = np.squeeze(minuses_pluses, 1)
 
-            minus_preds = self.predict(minuses, batch_size=300)
-            plus_preds = self.predict(pluses, batch_size=300)
+            #print(minuses_pluses.shape)
+            pm_preds = self.predict(minuses_pluses, batch_size=4000)
+            #minus_preds, plus_preds  = np.split(pm_preds, 2)
 
-            for i, (mp, pp) in enumerate(zip(minus_preds, plus_preds)):
+            #print('num pm preds', pm_preds.shape)
+            #print('b', b+1)
+            rounds = np.split(pm_preds, b+1)
+            #print('len(rounds)', len(rounds))
+            for rn, r in enumerate(rounds):
+              minus_preds, plus_preds  = np.split(r, 2)
+              #print(minus_preds.shape, plus_preds.shape)
+              j = jb + rn
+
+              for i, (mp, pp) in enumerate(zip(minus_preds, plus_preds)):
                 new_y_minus = entropy(y[i], mp)
                 new_y_plus = entropy(y[i], pp)
 
                 one_grad = epsilon_map[j] * (new_y_plus - new_y_minus)
                 grads[i] += one_grad
-
-            #for r in range(2):
-            #    for i in range(len(x)):
-            #        if r == 0: #plus
-            #            minus, plus = self._generate_sample_i(x[i : i + 1], epsilon_map, j)
-            #            minus_preds.append(self.predict(minus)[0])
-            #            pluses.append(plus)
-            #        else: #minus
-            #            plus_pred = self.predict(pluses[i])[0]
-                        
-            #            new_y_minus = entropy(y[i], minus_preds[i])
-            #            new_y_plus = entropy(y[i], plus_pred)
-
-            #            one_grad = epsilon_map[j] * (new_y_plus - new_y_minus)
-            #            grads[i] += one_grad
 
         for i in range(len(grads)):
             grads[i] = grads[i] / (self.num_basis * self.sigma)
@@ -310,8 +322,8 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
             # new_y_minus = ent_vec(self.predict(minus))
             # new_y_plus = ent_vec(self.predict(plus))
             # Vanilla
-            new_y_minus = np.array([entropy(y[i], p) for p in self.predict(minus)])
-            new_y_plus = np.array([entropy(y[i], p) for p in self.predict(plus)])
+            new_y_minus = np.array([entropy(y[i], p) for p in self.predict(minus, batch_size=2000)])
+            new_y_plus = np.array([entropy(y[i], p) for p in self.predict(plus, batch_size=2000)])
 
             #print('term1 shape', epsilon_map.reshape(self.num_basis, -1).shape)
             #print('term2 shape', ((new_y_plus - new_y_minus).reshape(self.num_basis, -1) / (2 * self.sigma)).shape)
