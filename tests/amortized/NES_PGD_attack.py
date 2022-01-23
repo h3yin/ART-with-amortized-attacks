@@ -1,11 +1,11 @@
 import sys
-import os
 import tempfile
 #sys.path.append('/home/h3yin/CS260_ML/project/adversarial-robustness-toolbox/')
 sys.path.append('.')
 
 from art.attacks.evasion import BoundaryAttack, FastGradientMethod, ZooAttack, HopSkipJump, SimBA
 from art.estimators.classification.query_efficient_bb import QueryEfficientGradientEstimationClassifier
+from art.attacks.evasion.projected_gradient_descent.projected_gradient_descent import ProjectedGradientDescent
 
 from art.estimators.classification import TensorFlowV2Classifier
 from art.utils import load_mnist
@@ -20,8 +20,7 @@ from tensorflow.python.keras.layers import deserialize, serialize
 from tensorflow.python.keras.saving import saving_utils
 
 from sklearn.metrics.pairwise import euclidean_distances
-
-from scipy.spatial.distance import cdist
+from sklearn.utils import shuffle
 
 import numpy as np
 import pickle
@@ -60,36 +59,21 @@ class TensorFlowModel(Model):
     def set_dist_metric(self, norm=2):
         if norm == 0:
             self.dist_metric = self.linf_norm_dist
-        elif norm == 1:
-            self.dist_metric = self.l1_norm_dist
         elif norm == 2:
             self.dist_metric = self.l2_norm_dist
-    
+
     def linf_norm_dist(self, a,b):
         t = a - b
-        return np.maximum(np.max(t, axis=(1,2)), -(np.min(t, axis=(1,2))))
-
-    def l1_norm_dist(self, a,b):
-        t = a - b
-        np.abs(t, out=t)
-        return np.sum(t, axis=(1,2))
-
-        #mask = t < 0
-        #np.negative(t, where=mask, out=t)
-        #return np.sum(t, axis = (1,2))
-
-        #return np.sum(np.abs(t), axis=(1,2))
-        #pos = np.sum(t, where=(t>0), axis=(1,2))
-        #neg = np.sum(t, where=(t<0), axis=(1,2))
-        #return pos - neg
-        #return t[t>0].sum(axis=(1,2)) - t[t < 0].sum(axis=(1,2))
-        #return np.sum(cdist(a, b, 'cityblock'), axis=(1,2))
-
+        return np.maximum(np.max(t, axis=(1,2)), np.abs(np.min(t, axis=(1,2))))
+        
     def l2_norm_dist(self, a, b):
         t = a-b
         return np.sqrt(np.einsum('kij,kij->k', t, t))
 
     def attacked(self):
+        if self.examples_processed == 0:
+            return np.nan
+
         if self.attacks/self.examples_processed >= 0.001:
             return True
         else:
@@ -112,20 +96,39 @@ class TensorFlowModel(Model):
         """
 
         #print('x.shape', x.shape, ' attacks:', self.attacks)
-        vlength = x.shape[1]*x.shape[2]
         if self.sd:
             self.examples_processed += x.shape[0]
             #print('self.examples_processed', self.examples_processed)
             if self.buf is not None and self.buf.shape[0] >= self.k:
                 buf = self.buf[-1*self.buf_limit:]
                 for i in range(x.shape[0]):
-                    comp_buf = np.concatenate((np.squeeze(buf[i:], axis=-1), np.squeeze(x[:i], axis=-1)))
-                    #comp_buf = np.squeeze(np.concatenate((buf[i:],x[:i])), axis=-1)
-                    distances = self.dist_metric(comp_buf, np.squeeze(x[i], axis=-1))
-                    distances.sort()
-                    #ad = np.average(distances[distances != 0][:self.k])
+                    #buf = buf[-1*self.buf_limit:]
+                    #distances = np.sort(np.linalg.norm(np.squeeze(buf, axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf))
+
+                    #half = int(self.buf_limit/2)
+                    #d1 = np.linalg.norm(np.squeeze(buf[i:half], axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf)
+                    #d2 = np.linalg.norm(np.squeeze(buf[i+half:], axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf)
+                    #d3 = np.linalg.norm(np.squeeze(x[:i], axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf)
+                    #distances = np.sort(np.concatenate((d1, d2, d3)))
+
+                    #d1 = np.linalg.norm(np.squeeze(buf[i:], axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf)
+                    #d2 = np.linalg.norm(np.squeeze(x[:i], axis=-1) - np.squeeze(x[i], axis=-1), axis=(-1,-2), ord=np.inf)
+
+                    #t = np.squeeze(buf[i:], axis=-1) - np.squeeze(x[i], axis=-1)
+                    #d1 = np.sqrt(np.einsum('kij,kij->k', t, t))
+                    #t = np.squeeze(x[:i], axis=-1) - np.squeeze(x[i], axis=-1)
+                    #d2 = np.sqrt(np.einsum('kij,kij->k', t, t))
+
+                    d1 = self.dist_metric(np.squeeze(buf[i:], axis=-1), np.squeeze(x[i], axis=-1))
+                    d2 = self.dist_metric(np.squeeze(x[:i], axis=-1), np.squeeze(x[i], axis=-1))
+                    #d1 = self.dist_metric(buf[i:], x[i])
+                    #d2 = self.dist_metric(x[:i], x[i])
+
+                    distances = np.sort(np.concatenate((d1, d2)))
+
                     nzi = np.nonzero(distances)[0][0]
                     ad = np.average(distances[nzi: nzi+self.k])
+                    #ad = np.average(distances[:self.k])
 
                     if ad <= self.thresh:
                         self.attacks += 1
@@ -135,6 +138,8 @@ class TensorFlowModel(Model):
                         self.min_distance = min_temp
 
                     self.distances.append(min_temp)
+
+                    #buf = np.concatenate((buf, x[i][np.newaxis]))
 
             if self.buf is None: 
                 self.buf = x
@@ -218,80 +223,47 @@ def make_keras_picklable():
 
 def linf_norm_dist(a,b):
     t = a - b
-    return np.maximum(np.max(t, axis=(1,2)), np.abs(np.min(t, axis=(1,2))))
-
-def l1_norm_dist(a,b):
-    t = a - b
-    #pos = np.sum(t, where=(t>0), axis=(1,2))
-    #neg = np.sum(t, where=(t<0), axis=(1,2))
-    #return pos + -neg
-    
-    #return t[t>0].sum(axis=(1,2)) - t[t < 0].sum(axis=(1,2))
-
-    return np.sum(np.abs(t), axis=(1,2))
+    return np.abs(t).max(axis=(1,2)) 
 
 def l2_norm_dist(a, b):
     t = a-b
     return np.sqrt(np.einsum('kij,kij->k', t, t))
 
-def choose_best_samples(x_data,y_data, num, k=50, norm=2, retrieve=True, store=True):
-    if len(x_data) == num:
-        return x_data, y_data
+def choose_best_samples(x_data,y_data, num, k=50, norm=2):
+    #features, labels = shuffle(x_data, y_data)
+    #return features[:num], labels[:num]
 
-    dirname = 'data_cache/'
-    if (retrieve or store) and not os.path.isdir(dirname):
-        os.mkdir(dirname)
+    average_distances = []
+    smallest_ad = float('inf')
 
-    norms = norm
     if norm == 0:
-        norms = 'inf'
+        dist_metric = linf_norm_dist
+        print('set norm 0')
+    elif norm == 2:
+        dist_metric = l2_norm_dist 
 
-    filename = f'{len(x_data)}_L{norms}_norm_{k}-NN_sorted_distances.pkl'
-    filepath = os.path.join(dirname, filename)
+    for i, x in enumerate(x_data):
+        #distances = np.sort(np.linalg.norm(np.squeeze(x_data, axis=-1) - np.squeeze(x, axis=-1), axis=(-1,-2), ord=np.inf))
+        distances = np.sort(dist_metric(np.squeeze(x_data, axis=-1), np.squeeze(x, axis=-1)))
+        nzi = np.nonzero(distances)[0][0]
+        ad = np.average(distances[nzi: nzi+k])
+        average_distances.append((ad, i))
+        if ad < smallest_ad:
+            smallest_ad = ad
 
-    if retrieve and os.path.isfile(filepath):
-        with open(filepath, 'rb') as data_file:
-            x_data, y_data, average_distances = pickle.load(data_file)
-            print(f'Loaded data from {filepath}')
-
-    else:
-        average_distances = []
-        smallest_ad = float('inf')
-
-        if norm == 0:
-            dist_metric = linf_norm_dist
-
-        elif norm == 1:
-            dist_metric = l1_norm_dist
-
-        elif norm == 2:
-            dist_metric = l2_norm_dist 
-
-        for i, x in enumerate(x_data):
-            distances = np.sort(dist_metric(np.squeeze(x_data, axis=-1), np.squeeze(x, axis=-1)))
-            nzi = np.nonzero(distances)[0][0]
-            ad = np.average(distances[nzi: nzi+k])
-            average_distances.append((ad, i))
-            if ad < smallest_ad:
-                smallest_ad = ad
-
-        average_distances.sort()
-        print(smallest_ad)
-
-        if store:
-            with open(filepath, 'wb') as data_file:
-                pickle.dump((x_data,y_data, average_distances), data_file, protocol=pickle.HIGHEST_PROTOCOL)
-                print(f'Saved data to {filepath}')
-
+    average_distances.sort()
     average_distances=average_distances[:x_data.shape[0]-num]
+
     indicies = [i for _,i in average_distances]
+    #indicies.sort(reverse=True)
 
     x_data=np.delete(x_data, indicies, axis=0)
     y_data=np.delete(y_data, indicies, axis=0)
 
     print(x_data.shape)
     print(y_data.shape)
-
+    print(smallest_ad)
+    #return x_data
     return x_data, y_data
 
 
@@ -364,6 +336,9 @@ x_test = x_test[:length]
 y_test = y_test[:length]
 reps = reps_arg
 
+#x_test = x_test[:1000]
+#y_test = y_test[:1000]
+#reps = 200
 model.buf_limit = buf_limit
 
 if buf_limit == 1000:
@@ -372,6 +347,7 @@ if buf_limit == 1000:
             model.thresh = 0.928
         elif len(x_test) == 1000:
             model.thresh = 0.903
+
     elif norm == 1:
         if len(x_test) == 1000:
             model.thresh = 21.0
@@ -404,14 +380,13 @@ if buf_limit == 1000:
         if len(x_test) == 50:
             model.thresh = 6.37
 
- 
-elif buf_limit == 5000: #10000 examples
+elif buf_limit == 10000:
     if norm == 0:
         model.thresh = 0.777
-    if norm == 2:    
+    if norm == 2:
         model.thresh = 2.50
 
-elif buf_limit == 10000: #10000 examples
+elif buf_limit == 10000:
     if norm == 0:
         model.thresh = 0.719
     elif norm == 2:
@@ -438,8 +413,6 @@ print('y values after choosing',  y_col_sum/np.sum(y_col_sum))
 print('len(x_test)', len(x_test))
 print('original sum', np.sum(x_test[0]))
 
-
-
 if not perform_attack:
     model.sd = True
 
@@ -450,7 +423,7 @@ if not perform_attack:
         predictions = classifier.predict(x_test)
 
     accuracy = np.sum(np.argmax(predictions, axis=1) == np.argmax(y_test, axis=1)) / len(y_test)
-    print("Accuracy on benign test examples: {}".format(accuracy))
+    print("Accuracy on benign test examples: {}%".format(accuracy * 100))
     print('model.thresh', model.thresh)
     print('before attack, attack detected: ', model.attacked())
     print('before attack, min distance: ', model.min_distance)
@@ -522,7 +495,9 @@ attack = ZooAttack(
 qe_classifier = QueryEfficientGradientEstimationClassifier(classifier, reps, 1 / sigma, round_samples=1 / 255.0)
 qe_classifier.amortized_attack = amortized_attack
 
-attack = FastGradientMethod(qe_classifier, eps=0.05, eps_step=0.05, batch_size=buf_limit, minimal=True)
+#attack = FastGradientMethod(classifier, eps=0.05, eps_step=0.025, batch_size=buf_limit, minimal=True)
+attack = ProjectedGradientDescent(qe_classifier, eps=0.05, eps_step=0.025, max_iter=10, batch_size=buf_limit, verbose=False)
+print('eps: ', attack.eps, ' eps_step: ', attack.eps_step, ' max_iter', attack.max_iter)
 start = time.time()
 model.sd = True
 x_test_adv = attack.generate(x=x_test)
@@ -538,14 +513,18 @@ predictions = classifier.predict(x_test_adv)
 accuracy = np.sum(np.argmax(predictions, axis=1) == np.argmax(y_test, axis=1)) / len(y_test)
 #print('eps: ', attack.eps, ' eps_step', attack.eps_step)
 #print('triangulate: ', attack.triangulate, ' t_n: ', attack.t_n)
-print("Accuracy on adversarial test examples: {}".format(accuracy))
+print("Accuracy on adversarial test examples: {}%".format(accuracy * 100))
 print('model thresh', model.thresh)
 print('after attack, attack detected: ', model.attacked())
 print('after attack, min distance: ', model.min_distance)
 print('after attack, num attacks: ', model.attacks)
-print(model.buf.shape)
+if model.buf != None:
+    print(model.buf.shape)
+
 print('examples_processed', model.examples_processed)
-print('attack percentage', model.attacks/model.examples_processed)
+
+if model.examples_processed != 0:
+    print('attack percentage', model.attacks/model.examples_processed)
 
 #asum = np.average(np.sum(np.squeeze(x_test - x_test_adv, axis=-1), axis=(-1,-2)))
 #print('average vector sum of differences', asum)
@@ -564,6 +543,7 @@ dist = np.sqrt(np.einsum('kij,kij->k', t, t))
 o = np.squeeze(x_test, axis=-1)
 norm = np.sqrt(np.einsum('kij,kij->k', o, o))
 print('average l2 norm of difference over l2 norm of original', np.average(dist/norm))
+
 
 dist = linf_norm_dist(np.squeeze(x_test, axis=-1),  np.squeeze( x_test_adv, axis=-1))
 o = np.squeeze(x_test, axis=-1)

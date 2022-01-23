@@ -164,8 +164,8 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
         :return: Array of gradients of the same shape as `x`.
         """
         epsilon_map = self.sigma * np.random.normal(size=([self.num_basis] + list(self.input_shape)))
-        print(epsilon_map.shape)
-        print(epsilon_map.reshape(self.num_basis, -1).shape)
+        #print(epsilon_map.shape)
+        #print(epsilon_map.reshape(self.num_basis, -1).shape)
         grads = [0.0] * len(x)
 
         for j in range(epsilon_map.shape[0]):
@@ -192,8 +192,8 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
             minuses = np.squeeze(minuses, 1)
             pluses = np.squeeze(pluses, 1)
 
-            minus_preds = self.predict(minuses, batch_size=128)
-            plus_preds = self.predict(pluses, batch_size=128)
+            minus_preds = self.predict(minuses)
+            plus_preds = self.predict(pluses)
 
             for i, (mp, pp) in enumerate(zip(minus_preds, plus_preds)):
                 new_y_minus = entropy(y[i], mp)
@@ -218,7 +218,7 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
             #            grads[i] += one_grad
 
         for i in range(len(grads)):
-            grads[i] = grads[i]* 2/self.num_basis / (2 * self.sigma)
+            grads[i] = grads[i] / (self.num_basis * self.sigma)
 
         grads = self._apply_preprocessing_gradient(x, np.array(grads))
         return grads
@@ -233,8 +233,8 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
         :return: Array of gradients of the same shape as `x`.
         """
         epsilon_map = self.sigma * np.random.normal(size=([self.num_basis] + list(self.input_shape)))
-        print(epsilon_map.shape)
-        print(epsilon_map.reshape(self.num_basis, -1).shape)
+        #print(epsilon_map.shape)
+        #print(epsilon_map.reshape(self.num_basis, -1).shape)
         grads = [0.0] * len(x)
 
         for j in range(epsilon_map.shape[0]):
