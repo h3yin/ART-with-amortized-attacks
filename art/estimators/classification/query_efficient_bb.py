@@ -322,8 +322,8 @@ class QueryEfficientGradientEstimationClassifier(ClassifierLossGradients, Classi
             # new_y_minus = ent_vec(self.predict(minus))
             # new_y_plus = ent_vec(self.predict(plus))
             # Vanilla
-            new_y_minus = np.array([entropy(y[i], p) for p in self.predict(minus, batch_size=2000)])
-            new_y_plus = np.array([entropy(y[i], p) for p in self.predict(plus, batch_size=2000)])
+            new_y_minus = np.array([entropy(y[i], p) for p in self.predict(minus, batch_size=4000)])
+            new_y_plus = np.array([entropy(y[i], p) for p in self.predict(plus, batch_size=4000)])
 
             #print('term1 shape', epsilon_map.reshape(self.num_basis, -1).shape)
             #print('term2 shape', ((new_y_plus - new_y_minus).reshape(self.num_basis, -1) / (2 * self.sigma)).shape)
