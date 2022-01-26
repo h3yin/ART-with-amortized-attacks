@@ -226,12 +226,12 @@ def make_callbacks(model_name, save=False):
 #https://github.com/tensorflow/tensorflow/issues/34697
 def unpack(model, training_config, weights):
     restored_model = deserialize(model, custom_objects={'TensorFlowModel': TensorFlowModel})
-    if training_config is not None:
-        restored_model.compile(
-            **saving_utils.compile_args_from_training_config(
-                training_config
-            )
-        )
+    #if training_config is not None:
+    #    restored_model.compile(
+    #        **saving_utils.compile_args_from_training_config(
+    #            training_config
+    #        )
+    #    )
     restored_model.build((None, 28,28,1))
     #print(restored_model.summary())
     restored_model.set_weights(weights)
@@ -267,56 +267,6 @@ def l1_norm_dist(a,b):
 def l2_norm_dist(a, b):
     t = a-b
     return np.sqrt(np.einsum('kij,kij->k', t, t))
-
-#https://stackoverflow.com/questions/44338676/what-is-the-fastest-way-to-select-the-smallest-n-elements-from-an-array
-def _partition(A, low, high):
-    """copied from numba source code"""
-    mid = (low + high) >> 1
-    if A[mid] < A[low]:
-        A[low], A[mid] = A[mid], A[low]
-    if A[high] < A[mid]:
-        A[high], A[mid] = A[mid], A[high]
-        if A[mid] < A[low]:
-            A[low], A[mid] = A[mid], A[low]
-    pivot = A[mid]
-
-    A[high], A[mid] = A[mid], A[high]
-
-    i = low
-    for j in range(low, high):
-        if A[j] <= pivot:
-            A[i], A[j] = A[j], A[i]
-            i += 1
-
-    A[i], A[high] = A[high], A[i]
-    return i
-
-#https://stackoverflow.com/questions/44338676/what-is-the-fastest-way-to-select-the-smallest-n-elements-from-an-array
-def _select_lowest(arry, k, low, high):
-    """copied from numba source code, slightly changed"""
-    i = _partition(arry, low, high)
-    while i != k:
-        if i < k:
-            low = i + 1
-            i = _partition(arry, low, high)
-        else:
-            high = i - 1
-            i = _partition(arry, low, high)
-    return arry[:k]
-
-#https://stackoverflow.com/questions/44338676/what-is-the-fastest-way-to-select-the-smallest-n-elements-from-an-array
-def _nlowest_inner(temp_arry, n, idx):
-    """copied from numba source code, slightly changed"""
-    low = 0
-    high = n - 1
-    return _select_lowest(temp_arry, idx, low, high)
-
-#https://stackoverflow.com/questions/44338676/what-is-the-fastest-way-to-select-the-smallest-n-elements-from-an-array
-def nlowest(a, idx):
-    """copied from numba source code, slightly changed"""
-    temp_arry = a.flatten()  # does a copy! :)
-    n = temp_arry.shape[0]
-    return _nlowest_inner(temp_arry, n, idx)
 
 
 def choose_best_samples(x_data,y_data, num, k=50, norm=2, retrieve=True, store=True):
@@ -587,29 +537,13 @@ else:
 
 #attack = SimBA(classifier=classifier,targeted=False, attack="dct")
 
-'''
-attack = ZooAttack(
-    classifier=classifier,
-    confidence=0.0,
-    targeted=False,
-    learning_rate=1e-1,
-    max_iter=400,
-    binary_search_steps=10,
-    initial_const=1e-3,
-    abort_early=True,
-    use_resize=False,
-    use_importance=False,
-    nb_parallel=5,
-    batch_size=1,
-    variable_h=0.01,
-)
-'''
 qe_classifier = QueryEfficientGradientEstimationClassifier(classifier, reps, 1 / sigma, round_samples=1 / 255.0)
 qe_classifier.amortized_attack = amortized_attack
 
 attack = FastGradientMethod(qe_classifier, eps=0.05, eps_step=0.05, batch_size=buf_limit, minimal=True)
 start = time.time()
 model.sd = True
+#np.random.seed(123454321)
 x_test_adv = attack.generate(x=x_test)
 #x_test_adv = attack.generate(x=x_test, y=y_test)
 end = time.time()
