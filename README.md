@@ -11,7 +11,7 @@ Parameters:
 4. `SIGMA`: 1/sigma parameter in NES, usually set to 16 (for sigma of 1/16)
 5. `BUF_SIZE`: how large the query buffer is
 6. `PERFORM_ATTACK`: either `0` to only run benign samples (used to determine threshold) or `1` to run the attack
-7. `NORM`: norm used for distance metric, so far only l2-norm has been implemented
+7. `NORM`: norm used for distance metric, `0` for L_infinity, `1` for L_1 and `2` for L2
 8. `ATTACK_TYPE`: either `amortized` or `vanilla`, to determine which version of the attack to useA
 9. `ATTACK_METHOD`: either `PGD` or `FGSM` to run that attack
 10. `USE_STATEFUL_DEFENSE`: either `0` to turn off stateful defense or `1` to turn on stateful defense
