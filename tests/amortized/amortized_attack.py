@@ -1,11 +1,11 @@
 import sys
 import os
 import tempfile
-#sys.path.append('/home/h3yin/CS260_ML/project/adversarial-robustness-toolbox/')
 sys.path.append('.')
 
 from art.attacks.evasion import BoundaryAttack, FastGradientMethod, ZooAttack, HopSkipJump, SimBA
 from art.estimators.classification.query_efficient_bb import QueryEfficientGradientEstimationClassifier
+from art.attacks.evasion.projected_gradient_descent.projected_gradient_descent import ProjectedGradientDescent
 
 from art.estimators.classification import TensorFlowV2Classifier
 from art.utils import load_mnist
@@ -74,22 +74,14 @@ class TensorFlowModel(Model):
         np.abs(t, out=t)
         return np.sum(t, axis=(1,2))
 
-        #mask = t < 0
-        #np.negative(t, where=mask, out=t)
-        #return np.sum(t, axis = (1,2))
-
-        #return np.sum(np.abs(t), axis=(1,2))
-        #pos = np.sum(t, where=(t>0), axis=(1,2))
-        #neg = np.sum(t, where=(t<0), axis=(1,2))
-        #return pos - neg
-        #return t[t>0].sum(axis=(1,2)) - t[t < 0].sum(axis=(1,2))
-        #return np.sum(cdist(a, b, 'cityblock'), axis=(1,2))
-
     def l2_norm_dist(self, a, b):
         t = a-b
         return np.sqrt(np.einsum('kij,kij->k', t, t))
 
     def attacked(self):
+        if self.examples_processed == 0:
+            return np.nan
+
         if self.attacks/self.examples_processed >= 0.001:
             return True
         else:
@@ -111,14 +103,14 @@ class TensorFlowModel(Model):
         :return: Prediction of the model
         """
 
-        #print('x.shape', x.shape, ' attacks:', self.attacks)
+        
         vlength = x.shape[1]*x.shape[2]
-        if self.sd:
+        if self.sd: #only run if use stateful defense
             self.examples_processed += x.shape[0]
-            #print('self.examples_processed', self.examples_processed)
 
+            #skip if buf is none or buf is less than k
             if self.buf is not None and self.buf.shape[0] >= self.k:
-                #buf1 = self.buf[-1*self.buf_limit:]
+                #concatenate buf with current batch for more efficient iterating
                 buf = np.concatenate((np.squeeze(self.buf[-1*self.buf_limit:], axis=-1), np.squeeze(x, axis=-1)))
 
                 x_len = x.shape[0]
@@ -127,28 +119,15 @@ class TensorFlowModel(Model):
                 if buf_len > self.buf_limit:
                     buf_len = self.buf_limit
 
+                #compares all inputs in current batch
                 for i in range(x.shape[0]):
-                    #comp_buf1 = np.concatenate((np.squeeze(buf1[i:], axis=-1), np.squeeze(x[:i], axis=-1)))
 
                     endi = -(x_len-i)
                     comp_buf = buf[ endi-self.buf_limit : endi]
 
-                    #print(self.buf.shape[0], np.all(comp_buf == comp_buf1))
-
                     distances = self.dist_metric(comp_buf, np.squeeze(x[i], axis=-1))
 
-                    #distances.sort()
-                    ##ad = np.average(distances[distances != 0][:self.k])
-                    #nzi = np.nonzero(distances)[0][0]
-                    #ad = np.average(distances[nzi: nzi+self.k])
-
-                    #ad = np.average(np.partition(distances[distances != 0], self.k)[:self.k])
-                    #ad = np.average(nlowest(distances[distances != 0], self.k)[:self.k])
- 
-                    #nonzero = distances[distances != 0]
-                    #nonzero.partition(self.k)
-                    #ad = np.average(nonzero[:self.k])
-
+                    #ignore zero distances, i.e. identical examples
                     num_zeros = distances.shape[0] - np.count_nonzero(distances)
                     if num_zeros:
                         distances.partition(self.k + num_zeros)
@@ -160,7 +139,8 @@ class TensorFlowModel(Model):
                         else:
                             distances.partition(self.k)
                             ad = np.average(distances[:self.k])
- 
+
+                    #increment if average distance lower than threshold
                     if ad <= self.thresh:
                         self.attacks += 1
 
@@ -170,11 +150,13 @@ class TensorFlowModel(Model):
 
                     self.distances.append(min_temp)
 
+            #update self.buf
             if self.buf is None: 
                 self.buf = x
             else:
                 self.buf = np.concatenate((self.buf, x))
          
+            #only gc once every 2*buf_limit examples to prevent constant garbage collecting
             if self.buf.shape[0] > self.buf_limit*2:
                 temp = self.buf[-1*self.buf_limit:]
                 gc.enable()
@@ -182,6 +164,7 @@ class TensorFlowModel(Model):
                 gc.collect()
                 self.buf = temp
 
+        #actual layers of CNN
         x = self.conv1(x)
         x = self.maxpool1(x)
         x = self.conv2(x)
@@ -224,6 +207,8 @@ def make_callbacks(model_name, save=False):
     return callbacks
 
 #https://github.com/tensorflow/tensorflow/issues/34697
+#used code from above link to make keras picklable
+#can't just use model.save because we also need the stateful defense code
 def unpack(model, training_config, weights):
     restored_model = deserialize(model, custom_objects={'TensorFlowModel': TensorFlowModel})
     #if training_config is not None:
@@ -256,23 +241,18 @@ def linf_norm_dist(a,b):
 
 def l1_norm_dist(a,b):
     t = a - b
-    #pos = np.sum(t, where=(t>0), axis=(1,2))
-    #neg = np.sum(t, where=(t<0), axis=(1,2))
-    #return pos + -neg
-    
-    #return t[t>0].sum(axis=(1,2)) - t[t < 0].sum(axis=(1,2))
-
     return np.sum(np.abs(t), axis=(1,2))
 
 def l2_norm_dist(a, b):
     t = a-b
     return np.sqrt(np.einsum('kij,kij->k', t, t))
 
-
+#sample selection function to choose samples with lowest average k-NN distances
 def choose_best_samples(x_data,y_data, num, k=50, norm=2, retrieve=True, store=True):
     if len(x_data) == num:
         return x_data, y_data
 
+    #cache data for faster repeated experiments
     dirname = 'data_cache/'
     if (retrieve or store) and not os.path.isdir(dirname):
         os.mkdir(dirname)
@@ -341,7 +321,6 @@ model.compile(optimizer, loss_object)
 
 (x_train, y_train), (x_test, y_test), min_pixel_value, max_pixel_value = load_mnist()
 
-#print(x_train.shape)
 
 model_name = 'test_model'
 model_filename = 'test_model.pkl'
@@ -349,7 +328,7 @@ model_filename = 'tests/amortized/test_model.pkl'
 callbacks = make_callbacks(model_name, False)
 #model.save('test_model.h5', save_format='tf')
 
-
+#either trains model or loads saved model, based on train_model
 if train_model:
     make_keras_picklable()
     model.fit(x_train, y_train, batch_size=64, epochs=64, callbacks=callbacks, validation_split=0.1)
@@ -364,9 +343,7 @@ else:
     with open(model_filename, 'rb') as model_file:
         model = pickle.load(model_file)
 
-
 #print(model.summary())
-
 classifier = TensorFlowV2Classifier(
     model=model,
     loss_object=loss_object,
@@ -376,7 +353,8 @@ classifier = TensorFlowV2Classifier(
     clip_values=(0, 1),
 )
 
-if len(sys.argv) >= 9:
+#input args
+if len(sys.argv) >= 11:
     length = int(sys.argv[1])
     reps_arg = int(sys.argv[2])
     chose = int(sys.argv[3])
@@ -385,18 +363,23 @@ if len(sys.argv) >= 9:
     perform_attack = bool(int(sys.argv[6]))
     norm = int(sys.argv[7])
     attack_type = sys.argv[8]
+    attack_method = sys.argv[9]
+    use_sd = bool(int(sys.argv[10]))
 
 if attack_type == 'amortized':
     amortized_attack = True
 elif attack_type == 'vanilla':
     amortized_attack = False
 
-print('length:', length, ' reps:', reps_arg, ' chose:', chose, ' sigma:', sigma, ' buf limit:', buf_limit, ' perform_attack: ', perform_attack, ' norm:', norm, ' amortized attack:', amortized_attack)
+print('length:', length, ' reps:', reps_arg, ' chose:', chose, ' sigma:', sigma, ' buf limit:', buf_limit, ' perform_attack: ', perform_attack, ' norm:', norm, ' amortized attack:', amortized_attack, ' attack method: ', attack_method, ' use stateful defense: ', use_sd)
 
+#chooses distance metric in model
 model.set_dist_metric(norm)
 
+#uses appropriate number of test examples
 x_test = x_test[:length]
 y_test = y_test[:length]
+
 reps = reps_arg
 
 model.buf_limit = buf_limit
@@ -440,13 +423,13 @@ if buf_limit == 1000:
             model.thresh = 6.37
 
  
-elif buf_limit == 5000: #10000 examples
+elif buf_limit == 5000: #10000 examples only
     if norm == 0:
         model.thresh = 0.777
     if norm == 2:    
         model.thresh = 2.50
 
-elif buf_limit == 10000: #10000 examples
+elif buf_limit == 10000: #10000 examples only
     if norm == 0:
         model.thresh = 0.719
     elif norm == 2:
@@ -454,8 +437,7 @@ elif buf_limit == 10000: #10000 examples
     else:
         model.thresh = 2.45
 
-#model.thresh = 5.6
-
+#choose samples and display relative percentages before and after
 y_col_sum = np.sum(y_test,axis=0)
 print('y values before choosing', y_col_sum/np.sum(y_col_sum))
 
@@ -464,17 +446,11 @@ x_test, y_test = choose_best_samples(x_test,y_test, chose, 50, norm=norm)
 y_col_sum = np.sum(y_test,axis=0)
 print('y values after choosing',  y_col_sum/np.sum(y_col_sum))
 
-#exit()
-
-#x_test, y_test = choose_best_samples(x_test,y_test, 500, 50)
-
-#print(x_test[12].tolist())#
 
 print('len(x_test)', len(x_test))
-print('original sum', np.sum(x_test[0]))
+#print('original sum', np.sum(x_test[0]))
 
-
-
+#runs this if don't want to perform attack, only use this to set threshold
 if not perform_attack:
     model.sd = True
 
@@ -520,7 +496,6 @@ if not perform_attack:
 model.sd = False
 model.reset_stateful()
 
-
 if len(sys.argv) >= 3:
     es = float(sys.argv[1])
     tn = int(sys.argv[2])
@@ -528,35 +503,33 @@ else:
     es = 0.011
     tn = 7
 
-# Step 6: Generate adversarial test examples
-#attack = FastGradientMethod(estimator=classifier, eps=0.35, eps_step=0.08, minimal=True)
-#attack = FastGradientMethod(estimator=classifier, eps=0.3, eps_step=es, minimal=True)
-
-#attack = BoundaryAttack(estimator=classifier, targeted=False, delta=0.3, epsilon=0.1, step_adapt=0.66, min_epsilon=0.1, verbose=False)
-#attack = BoundaryAttack(estimator=classifier,targeted=False,  verbose=True)
-
-#attack = SimBA(classifier=classifier,targeted=False, attack="dct")
-
+# generate adversarial test examples
 qe_classifier = QueryEfficientGradientEstimationClassifier(classifier, reps, 1 / sigma, round_samples=1 / 255.0)
 qe_classifier.amortized_attack = amortized_attack
 
-attack = FastGradientMethod(qe_classifier, eps=0.05, eps_step=0.05, batch_size=buf_limit, minimal=True)
+if attack_method == 'FGSM':
+    print('used FGSM')
+    attack = FastGradientMethod(qe_classifier, eps=0.05, eps_step=0.05, batch_size=buf_limit, minimal=True)
+elif attack_method == 'PGD':
+    attack = ProjectedGradientDescent(qe_classifier, eps=0.05, eps_step=0.025, max_iter=5, batch_size=buf_limit, verbose=False)
+    print('used PGD - ', 'eps: ', attack.eps, ' eps_step: ', attack.eps_step, ' max_iter', attack.max_iter)
+else:
+    print('unknown attack specified! stopping...')
+    exit()
+  
 start = time.time()
-model.sd = True
+model.sd = use_sd
+#uncomment below to set seed
 #np.random.seed(123454321)
 x_test_adv = attack.generate(x=x_test)
-#x_test_adv = attack.generate(x=x_test, y=y_test)
 end = time.time()
 
 print('attack generated', not (x_test==x_test_adv).all())
 
 
-# Step 7: Evaluate the ART classifier on adversarial test examples
-
+# evaluate classifier on adversarial test examples and print results
 predictions = classifier.predict(x_test_adv)
 accuracy = np.sum(np.argmax(predictions, axis=1) == np.argmax(y_test, axis=1)) / len(y_test)
-#print('eps: ', attack.eps, ' eps_step', attack.eps_step)
-#print('triangulate: ', attack.triangulate, ' t_n: ', attack.t_n)
 
 print('time taken:', end - start)
 print("Accuracy on adversarial test examples: {}".format(accuracy))
@@ -564,21 +537,15 @@ print('model thresh', model.thresh)
 print('after attack, attack detected: ', model.attacked())
 print('after attack, min distance: ', model.min_distance)
 print('after attack, num attacks: ', model.attacks)
-print(model.buf.shape)
+#print(model.buf.shape)
+
+if model.buf is not None:
+    print(model.buf.shape)
+
 print('examples_processed', model.examples_processed)
-print('attack percentage', model.attacks/model.examples_processed)
 
-#asum = np.average(np.sum(np.squeeze(x_test - x_test_adv, axis=-1), axis=(-1,-2)))
-#print('average vector sum of differences', asum)
-
-#ad = np.average(np.linalg.norm(np.squeeze(x_test - x_test_adv, axis=-1), axis=(-1,-2), ord=np.inf))
-#print('average difference of adversarial samples', ad)
-
-#print('average difference over average original', ad/np.average(np.linalg.norm(np.squeeze(x_test, axis=-1),axis=(-1,-2), ord=np.inf)))
-
-#print('average of the norm of differences over norm of original', np.average(np.linalg.norm(np.squeeze(x_test - x_test_adv, axis=-1), axis=(-1,-2), ord=np.inf)/np.linalg.norm(np.squeeze(x_test, axis=-1), axis=(-1,-2), ord=np.inf)))
-#print('average iterations per batch', attack.i/attack.batches)
-
+if model.examples_processed != 0:
+    print('attack percentage', model.attacks/model.examples_processed)
 
 t = np.squeeze(x_test - x_test_adv, axis=-1)
 dist = np.sqrt(np.einsum('kij,kij->k', t, t))
@@ -590,9 +557,4 @@ dist = linf_norm_dist(np.squeeze(x_test, axis=-1),  np.squeeze( x_test_adv, axis
 o = np.squeeze(x_test, axis=-1)
 norm = np.abs(o).max(axis=(1,2))
 print('average l-infinity norm of difference over l-infinity norm of original', np.average(dist/norm))
-
-#print('average of the norm of the (norm of differences over original)', np.average(np.linalg.norm(np.linalg.norm(np.squeeze(x_test - x_test_adv, axis=-1), axis=(-1,-2), ord=np.inf)[:, None, None]/np.squeeze(x_test, axis=-1), axis=(-1,-2) )))
-
-#print(x_test[12].tolist())
-#print(x_test_adv[0].tolist())#also 13
 print()

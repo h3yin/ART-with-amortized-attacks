@@ -38,6 +38,7 @@ from art.estimators.classification.classifier import ClassifierMixin
 from art.estimators.estimator import BaseEstimator, LossGradientsMixin
 from art.utils import compute_success, get_labels_np_array, check_and_transform_label_format, compute_success_array
 from art.summary_writer import SummaryWriter
+import time
 
 if TYPE_CHECKING:
     from art.utils import CLASSIFIER_LOSS_GRADIENTS_TYPE, OBJECT_DETECTOR_TYPE
@@ -343,7 +344,7 @@ class ProjectedGradientDescentNumpy(ProjectedGradientDescentCommon):
                     ):
                         self._i_max_iter = i_max_iter
                         print('current iter', i_max_iter)
-
+                        start_time = time.time()
                         batch = self._compute(
                             batch,
                             x[batch_index_1:batch_index_2],
@@ -355,6 +356,13 @@ class ProjectedGradientDescentNumpy(ProjectedGradientDescentCommon):
                             self.num_random_init > 0 and i_max_iter == 0,
                             self._batch_id,
                         )
+                        end_time = time.time()
+                        print('time took for iteration', end_time - start_time)
+                        if self.estimator._model.examples_processed:
+                            print('attack percentage', self.estimator._model.attacks/self.estimator._model.examples_processed)
+                        else:
+                            print('no examples processed, maybe stateful defense is not on?')
+                        print()
 
                     if rand_init_num == 0:
                         # initial (and possibly only) random restart: we only have this set of
@@ -411,6 +419,8 @@ class ProjectedGradientDescentNumpy(ProjectedGradientDescentCommon):
                     self._project,
                     self.num_random_init > 0 and i_max_iter == 0,
                 )
+
+                print('attack percentage', self.estimator._model.attacks/self.estimator._model.examples_processed)
 
         if self.summary_writer is not None:
             self.summary_writer.reset()
