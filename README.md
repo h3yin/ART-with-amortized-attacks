@@ -20,6 +20,8 @@ Scripts `run_amortized.sh`, `run_vanilla.sh`, `run_thresh.sh`, `run_large_buf.sh
 
 Please use `tensorflow==2.6.0` with `keras==2.6.0`, other versions have not been tested with this code.
 
+To set a random seed, uncomment `np.rand.seed` in `tests/amortized/amortized_attack.py`.
+
 ____________________________________
 
 # Adversarial Robustness Toolbox (ART) v1.9
