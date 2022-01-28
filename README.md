@@ -1,20 +1,24 @@
-This is forked from the Adversarial Robustness Toolbox (see below) with modified QueryEfficientGradientEstimationClassifier to be amortized.
+This is forked from the Adversarial Robustness Toolbox (see below) with modified QueryEfficientGradientEstimationClassifier (in `art/estimators/classification/query_efficient_bb.py`) to be amortized.
 
-`tests/amortized/amortized_attack.py` contains a CNN with stateful defense implemented and runs the amortized query efficient black-box attack (or NES) on it.
+`tests/amortized/amortized_attack.py` contains a CNN with stateful defense implemented and runs the amortized query efficient black-box attack (or NES) on it. It is modified from `examples/get_started_tensorflow_v2.py`.
 
-To run go to the main directory and run `python tests/amortized/amortized_attack.py [NUM TEST DATA] [REPS] [NUM_CHOSEN] [SIGMA] [BUF_SIZE] [PERFORM_ATTACK] [NORM] [ATTACK_TYPE]`
+To run go to the main directory and run `python tests/amortized/amortized_attack.py [NUM TEST DATA] [REPS] [NUM_CHOSEN] [SIGMA] [BUF_SIZE] [PERFORM_ATTACK] [NORM] [ATTACK_TYPE][ATTACK_METHOD] [USE_STATEFUL_DEFENSE]`
 
 Parameters:
 1. `NUM_TEST_DATA`: number of data points from the test set used to set the threshold and to choose from
 2. `REPS`: how many pairs of samples to generate and query (in NES) for each adversarial example
 3. `NUM_CHOSEN`: out of the `NUM_TEST_DATA` data points, choose this many to generate adversarial examples
-4. `SIGMA`: 1/sigma parameters in NES, usually set to 32 (for sigma of 1/32)
+4. `SIGMA`: 1/sigma parameter in NES, usually set to 16 (for sigma of 1/16)
 5. `BUF_SIZE`: how large the query buffer is
 6. `PERFORM_ATTACK`: either `0` to only run benign samples (used to determine threshold) or `1` to run the attack
 7. `NORM`: norm used for distance metric, so far only l2-norm has been implemented
-8. `ATTACK_TYPE`: either `amortized` or `vanilla`, to determine which version of the attack to use
+8. `ATTACK_TYPE`: either `amortized` or `vanilla`, to determine which version of the attack to useA
+9. `ATTACK_METHOD`: either `PGD` or `FGSM` to run that attack
+10. `USE_STATEFUL_DEFENSE`: either `0` to turn off stateful defense or `1` to turn on stateful defense
 
-Scripts `run_amortized.sh`, `run_vanilla.sh`, and `run_thresh.sh` are provided as examples.
+Scripts `run_amortized.sh`, `run_vanilla.sh`, `run_thresh.sh`, `run_large_buf.sh`, `run_many_reps.sh`, `run_PGD.sh` and `run_sigma.sh` are provided as examples.
+
+Please use `tensorflow==2.6.0` with `keras==2.6.0`, other versions have not been tested with this code.
 
 ____________________________________
 
