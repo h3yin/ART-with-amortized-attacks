@@ -2,7 +2,7 @@ This is forked from the Adversarial Robustness Toolbox (see below) with modified
 
 `tests/amortized/amortized_attack.py` contains a CNN with stateful defense implemented and runs the amortized query efficient black-box attack (or NES) on it. It is modified from `examples/get_started_tensorflow_v2.py`.
 
-To run go to the main directory and run `python tests/amortized/amortized_attack.py [NUM TEST DATA] [REPS] [NUM_CHOSEN] [SIGMA] [BUF_SIZE] [PERFORM_ATTACK] [NORM] [ATTACK_TYPE][ATTACK_METHOD] [USE_STATEFUL_DEFENSE]`
+To run go to the main directory and run `python tests/amortized/amortized_attack.py [NUM TEST DATA] [REPS] [NUM_CHOSEN] [SIGMA] [BUF_SIZE] [PERFORM_ATTACK] [NORM] [ATTACK_TYPE] [ATTACK_METHOD] [USE_STATEFUL_DEFENSE]`
 
 Parameters:
 1. `NUM_TEST_DATA`: number of data points from the test set used to set the threshold and to choose from
